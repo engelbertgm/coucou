@@ -408,12 +408,16 @@ pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
 
 /// Places and sizes the window: the full panel, or `collapsed` to the size the
 /// closed island needs (the wake strip when it shows nothing).
+/// Local change: `true` puts the island at the very top of the display, on top of
+/// app bars such as MyDockFinder's menu bar, instead of under them.
+const IGNORE_TOP_BARS: bool = true;
+
 /// Windows: how far a taskbar docked at the top of this display (or another
 /// app bar there) pushes the island down, read from the display's work area,
 /// so the island sits under it (#956). An auto-hidden taskbar takes no work
 /// area and moves nothing. Linux anchors the island to the screen edge: 0.
 fn top_inset(m: &tauri::Monitor) -> i32 {
-    if cfg!(windows) {
+    if cfg!(windows) && !IGNORE_TOP_BARS {
         top_inset_from(m.position().y, m.work_area().position.y)
     } else {
         0
