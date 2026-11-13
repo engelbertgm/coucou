@@ -1119,6 +1119,9 @@ pub fn run() {
                 webview_drop::install(&handle);
                 island::apply_geometry(&handle, &loaded.screen, None);
                 let _ = win.show();
+                // Local change: keep the island above every other always-on-top
+                // window (MyDockFinder's menu bar). Windows-only, event-driven.
+                platform::keep_on_top(&win);
             }
             gate.collapsed.store(false, Ordering::Relaxed);
             // Nothing drawn yet, so nothing takes the mouse until the page

@@ -27,6 +27,7 @@ use ::windows::Win32::System::SystemInformation::GetLocalTime;
 use ::windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentProcess, GetCurrentThreadId, OpenProcessToken,
 };
+use ::windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use ::windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayoutList, MapVirtualKeyExW, ToUnicodeEx, HKL, MAPVK_VK_TO_VSC,
     VK_CONTROL, VK_LBUTTON, VK_MENU, VK_SHIFT,
@@ -37,8 +38,9 @@ use ::windows::Win32::UI::Shell::{
 use ::windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, EnumChildWindows, EnumWindows, GetClassNameW, GetCursorPos,
     GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId,
-    IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, ShowWindow,
-    GWL_EXSTYLE, GW_OWNER, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND, GWL_EXSTYLE,
+    HWND_TOPMOST, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, GW_OWNER, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW,
 };
 
@@ -350,6 +352,57 @@ pub fn make_non_activating(win: &WebviewWindow) {
         let want = overlay_bits(ex | WS_EX_NOACTIVATE.0 as isize);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want);
     }
+}
+
+/// Local change: keeps the island above every other always-on-top window
+/// (MyDockFinder's menu bar). No timer: Windows calls `on_window_change` when
+/// another app's window comes forward or appears, and only then the island is
+/// put back on top, without moving it or taking focus.
+static ON_TOP: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+pub fn keep_on_top(win: &WebviewWindow) {
+    let Some(hwnd) = hwnd_of(win) else { return };
+    ON_TOP.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
+    unsafe {
+        raise_topmost(hwnd);
+        // Out of context: the callback runs on this (the UI) thread's message
+        // loop. Skip our own windows, so raising the island wakes nothing.
+        let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
+        let _ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(on_window_change), 0, 0, flags);
+        let _ = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_REORDER, None, Some(on_window_change), 0, 0, flags);
+    }
+}
+
+unsafe extern "system" fn on_window_change(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: HWND,
+    id_object: i32,
+    id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    // Only whole windows (OBJID_WINDOW, CHILDID_SELF), not the buttons and
+    // menus inside them.
+    if id_object != 0 || id_child != 0 {
+        return;
+    }
+    let ours = ON_TOP.load(std::sync::atomic::Ordering::Relaxed);
+    if ours != 0 {
+        raise_topmost(HWND(ours as *mut _));
+    }
+}
+
+unsafe fn raise_topmost(hwnd: HWND) {
+    let _ = SetWindowPos(
+        hwnd,
+        Some(HWND_TOPMOST),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+    );
 }
 
 /// Temporarily allow activation so a text field inside the island can be typed in.
