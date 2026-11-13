@@ -1097,9 +1097,21 @@ pub fn run() {
             if let Some(win) = island::window(&handle) {
                 // Where Tauri takes the drop itself (Linux), its paths are the
                 // ones ingest_file may copy (files.rs).
-                win.on_window_event(|event| {
+                let island_win = win.clone();
+                win.on_window_event(move |event| {
                     if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                         files::allow_dropped(paths.iter().map(|p| p.to_string_lossy().to_string()));
+                    }
+                    // Local change: an app bar (MyDockFinder's menu bar) pushes the
+                    // island down after it is placed. Put it back on the top edge.
+                    if let (true, tauri::WindowEvent::Moved(pos)) = (cfg!(windows), event) {
+                        if let Ok(Some(m)) = island_win.current_monitor() {
+                            let top = m.position().y;
+                            let pushed = pos.y - top;
+                            if pushed > 0 && pushed < 200 {
+                                let _ = island_win.set_position(tauri::PhysicalPosition::new(pos.x, top));
+                            }
+                        }
                     }
                 });
                 platform::make_non_activating(&win);
